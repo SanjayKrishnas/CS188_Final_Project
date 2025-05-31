@@ -1,2 +1,6 @@
-# CS188_Final_Project
-Sanjay and Nakul's CS188 Final Project + README
+# CS188_Final_Project 
+
+Contributors:
+    1. Nakul Joshi
+    2. Sanjay Krishna
+
