@@ -3,25 +3,53 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from collections import defaultdict
+from torch.utils.data import Dataset, DataLoader, random_split
 
-# Define MLP policy
+# --- Model Definition ---
 class ImitationPolicy(nn.Module):
-    def __init__(self, input_dim, output_dim):
+    def __init__(self, input_dim=21):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 256),
+        self.backbone = nn.Sequential(
+            nn.Linear(input_dim, 512),
             nn.ReLU(),
-            nn.Linear(256, 256),
+            nn.Dropout(0.1),
+            nn.Linear(512, 256),
             nn.ReLU(),
-            nn.Linear(256, output_dim),
+            nn.Dropout(0.1),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
         )
+        self.position_head = nn.Linear(64, 3)
+        self.rotation_head = nn.Linear(64, 3)
+        self.gripper_head = nn.Linear(64, 1)
 
     def forward(self, x):
-        return self.net(x)
+        features = self.backbone(x)
+        pos = self.position_head(features)
+        rot = self.rotation_head(features)
+        grip = torch.tanh(self.gripper_head(features))  # Gripper in [-1, 1]
+        return torch.cat([pos, rot, grip], dim=-1)
 
+
+# --- Dataset ---
+class ImitationDataset(Dataset):
+    def __init__(self, obs, actions):
+        self.obs = torch.tensor(obs, dtype=torch.float32)
+        self.actions = torch.tensor(actions, dtype=torch.float32)
+
+    def __len__(self):
+        return len(self.obs)
+
+    def __getitem__(self, idx):
+        return self.obs[idx], self.actions[idx]
+
+
+# --- Data Loading ---
 def load_demos(npz_path):
     flat_data = np.load(npz_path)
-    demos = defaultdict(lambda: {})
+    demos = defaultdict(dict)
     for key in flat_data.files:
         parts = key.split('_', 2)
         if len(parts) < 3:
@@ -32,47 +60,87 @@ def load_demos(npz_path):
     return demos
 
 def create_dataset(demos):
-    obs_list = []
-    action_list = []
+    obs_list, action_list = [], []
+
     for demo in demos.values():
-        obs = np.concatenate([
-            demo["obs_object"],
+        obs_vector = np.concatenate([
             demo["obs_robot0_eef_pos"],
             demo["obs_robot0_eef_quat"],
-            demo["obs_robot0_gripper_qpos"]
+            demo["obs_object"]
         ], axis=-1)
-        actions = demo["actions"]
-        obs_list.append(obs)
-        action_list.append(actions)
-    return np.concatenate(obs_list, axis=0), np.concatenate(action_list, axis=0)
+        obs_list.append(obs_vector)
+        action_list.append(demo["actions"])
 
-def train(model, obs, actions, epochs=50, batch_size=64, lr=1e-3):
+    obs = np.concatenate(obs_list, axis=0)
+    actions = np.concatenate(action_list, axis=0)
+    return obs, actions
+
+
+# --- Training ---
+def train(model, dataset, config):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+
+    # Split dataset
+    val_len = int(len(dataset) * config["val_split"])
+    train_len = len(dataset) - val_len
+    train_ds, val_ds = random_split(dataset, [train_len, val_len])
+
+    train_loader = DataLoader(train_ds, batch_size=config["batch_size"], shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=config["batch_size"], shuffle=False)
+
+    optimizer = optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
     loss_fn = nn.MSELoss()
 
-    obs = torch.tensor(obs, dtype=torch.float32).to(device)
-    actions = torch.tensor(actions, dtype=torch.float32).to(device)
+    for epoch in range(config["epochs"]):
+        model.train()
+        running_loss = 0.0
+        for obs_batch, act_batch in train_loader:
+            obs_batch, act_batch = obs_batch.to(device), act_batch.to(device)
 
-    for epoch in range(epochs):
-        perm = torch.randperm(obs.size(0))
-        obs, actions = obs[perm], actions[perm]
-        for i in range(0, obs.size(0), batch_size):
-            o_batch = obs[i:i+batch_size]
-            a_batch = actions[i:i+batch_size]
-            pred = model(o_batch)
-            loss = loss_fn(pred, a_batch)
+            pred_actions = model(obs_batch)
+            loss = loss_fn(pred_actions, act_batch)
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-        print(f"Epoch {epoch+1}/{epochs} - Loss: {loss.item():.4f}")
+            running_loss += loss.item()
 
-    torch.save(model.state_dict(), "imitation_policy.pt")
-    print("Policy saved to imitation_policy.pt")
+        # Validation
+        model.eval()
+        val_loss = 0.0
+        with torch.no_grad():
+            for val_obs, val_act in val_loader:
+                val_obs, val_act = val_obs.to(device), val_act.to(device)
+                val_pred = model(val_obs)
+                val_loss += loss_fn(val_pred, val_act).item()
 
+        avg_train_loss = running_loss / len(train_loader)
+        avg_val_loss = val_loss / len(val_loader)
+
+        print(f"Epoch {epoch+1}/{config['epochs']} - Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
+
+    torch.save(model.state_dict(), config["checkpoint_path"])
+    print(f"Model saved to {config['checkpoint_path']}")
+
+
+# --- Main ---
 if __name__ == "__main__":
-    demos = load_demos("demos.npz")
+    config = {
+        "epochs": 100,
+        "batch_size": 128,
+        "lr": 2e-4,
+        "weight_decay": 1e-5,
+        "val_split": 0.2,
+        "checkpoint_path": "bc_model.pth",
+        "obs_dim": 21,
+        "act_dim": 7,
+        "demo_dir": "demos"
+    }
+
+    demos = load_demos(f"{config['demo_dir']}.npz")
     obs, actions = create_dataset(demos)
-    model = ImitationPolicy(input_dim=23, output_dim=7)  # Adjust input_dim if you change features
-    train(model, obs, actions)
+    dataset = ImitationDataset(obs, actions)
+
+    model = ImitationPolicy(input_dim=config["obs_dim"])
+    train(model, dataset, config)
