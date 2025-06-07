@@ -4,7 +4,7 @@ import os
 from collections import defaultdict
 
 # Load your NPZ file
-data = np.load('./demos.npz')
+data = np.load('../demos.npz')
 
 # Group data by demo number
 demos = defaultdict(dict)
