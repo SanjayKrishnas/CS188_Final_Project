@@ -28,11 +28,10 @@ class DMPPolicyWithPID:
         best_error = 1000
         selected_demo_idx = 0
         
-        # Use your original min X-coordinate method (since it works better)
         for i in range(200):
             demo_candidate = demos[f'demo_{i}']
             positions = demo_candidate['obs_robot0_eef_pos']
-            demo_nut_pos = min(positions, key=lambda x: x[0])  # Your original method
+            demo_nut_pos = min(positions, key=lambda x: x[0])  
             error = np.linalg.norm(demo_nut_pos - square_pos)
             if error < best_error:
                 best_error = error
@@ -128,6 +127,13 @@ class DMPPolicyWithPID:
         self.total_steps_executed = 0
         self.segment_lengths = [len(traj) for traj in self.segment_trajectories]
         self.cumulative_lengths = np.cumsum([0] + self.segment_lengths)
+        
+        # Wiggle parameters
+        self.wiggle_active = False
+        self.wiggle_step = 0
+        self.wiggle_duration = 50  # Number of steps to wiggle
+        self.wiggle_amplitude = 0.07  # 1cm amplitude
+        self.wiggle_center = None
 
     def detect_grasp_segments(self, grasp_flags: np.ndarray) -> list:
         """
@@ -169,8 +175,30 @@ class DMPPolicyWithPID:
         Returns:
             np.ndarray: Action vector [dx,dy,dz,0,0,0,grasp].
         """
+        # Check if we're done with all segments and should start wiggling
         if self.current_segment >= len(self.segments):
-            return np.zeros(7)
+            if not self.wiggle_active:
+                # Start wiggling
+                self.wiggle_active = True
+                self.wiggle_center = robot_eef_pos.copy()
+                self.wiggle_step = 0
+            
+            if self.wiggle_step < self.wiggle_duration:
+                # Simple back-and-forth wiggle in X and Y
+                wiggle_x = self.wiggle_amplitude * np.sin(2 * np.pi * self.wiggle_step / 10)
+                wiggle_y = self.wiggle_amplitude * np.cos(2 * np.pi * self.wiggle_step / 8)
+                
+                target_pos = self.wiggle_center + np.array([wiggle_x, wiggle_y, 0])
+                self.pid.target = target_pos
+                delta_pos = self.pid.update(robot_eef_pos, dt=self.dt)
+                
+                # Keep grasp open during wiggle
+                action = np.array([delta_pos[0], delta_pos[1], delta_pos[2], 0.0, 0.0, 0.0, 0.0])
+                self.wiggle_step += 1
+                return action
+            else:
+                # Wiggling done
+                return np.zeros(7)
         
         current_traj = self.segment_trajectories[self.current_segment]
         
@@ -180,6 +208,7 @@ class DMPPolicyWithPID:
             self.pid.reset()
             
             if self.current_segment >= len(self.segments):
+                # Will trigger wiggle on next call
                 return np.zeros(7)
             
             current_traj = self.segment_trajectories[self.current_segment]
