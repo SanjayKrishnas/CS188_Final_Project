@@ -1,7 +1,3 @@
-Certainly! Here's a comprehensive `README.md` tailored for your repository:
-
----
-
 # CS188 Final Project: Imitation Learning for Square Assembly
 
 This repository contains the final project for UCLA's CS188: Introduction to Robotics (Spring 2025). The project focuses on solving the Robosuite Square Assembly task using imitation learning techniques.
