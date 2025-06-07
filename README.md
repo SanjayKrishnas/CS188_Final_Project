@@ -52,7 +52,7 @@ The MLP approach utilizes a feedforward neural network trained via supervised le
 
    ```bash
    cd DMP
-   python dmp_policy.py
+   python dmp_test_final.py
    ```
 
 
