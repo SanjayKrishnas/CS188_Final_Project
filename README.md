@@ -2,7 +2,7 @@
 
 This repository contains the final project for UCLA's CS188: Introduction to Robotics (Spring 2025). The project focuses on solving the Robosuite Square Assembly task using imitation learning techniques.
 
-## 📌 Project Overview
+##  Project Overview
 
 The objective is to train a robotic manipulator to perform the Square Assembly task by learning from demonstrations. Two primary approaches were implemented:
 
@@ -20,7 +20,7 @@ CS188_Final_Project/
 ├── README.md                # Project documentation
 ```
 
-## 🧠 Approaches
+##  Approaches
 
 ### Dynamic Movement Primitives (DMP)
 
@@ -30,7 +30,7 @@ The DMP approach models the demonstrated trajectories as a set of differential e
 
 The MLP approach utilizes a feedforward neural network trained via supervised learning. It takes in the robot's observations and outputs the corresponding actions, effectively cloning the behavior demonstrated in the dataset.
 
-## 🛠️ Setup Instructions
+##  Setup Instructions
 
 1. **Clone the Repository:**
 
@@ -56,7 +56,7 @@ The MLP approach utilizes a feedforward neural network trained via supervised le
    ```
 
 
-## 👥 Contributors
+##  Contributors
 
 * **Sanjay Krishna** 
 * **Nakul Joshi** 
